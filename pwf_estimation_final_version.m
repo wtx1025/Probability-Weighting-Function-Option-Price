@@ -21,12 +21,11 @@ data.DTB3(zero_indices) = fillmissing(data.DTB3(zero_indices), 'previous');
 data.DTB3(data.DTB3 < 0) = abs(data.DTB3(data.DTB3 < 0));
 data.DTB3 = data.DTB3 .* (1/100) .* (1/3); 
 
-%% particle filter
+%% run particle filter
 %{
 numberIterations = 100; 
-params = [1, 1, 0.8, 0.8, 0.05, 0.05, 0.01, 0.1, 2];
-[loglikelihood, estimatedStates] = particle_filter(params, data);
-fprintf('Loglikelihood = %.4f', loglikelihood(1,1)); 
+params = [1.4, 1.4, 0.48, 0.9, 0.02, 0.04, 0.001, 0.17, 3.6];
+estimatedStates = particle_filter(params, data);
 
 figure;
 subplot(2, 1, 1);
@@ -45,19 +44,15 @@ grid on;
 %}
 
 %% Parameter estimation
-%{
-[1.20127174887926 1.02522550568267 0.831663894461603 0.80260955293634...
-     0.0284611385396106 0.0326465415084148 0.0104344885178965...
-     0.107465514418432 3.99829360465853];
-%} 
-initialParams = [1, 1, 0.8, 0.8, 0.03, 0.03, 0.01, 0.1, 2];
+initialParams = [1, 1, 0.8, 0.8, 0.1, 0.1, 0.01, 0.1, 2];
 
-lb = [0.4, 0.6, 0.5, 0.5, 0.001, 0.001, 0.0001, 0.0001, 1];
-ub = [1.6, 1.4, 1, 1, 0.05, 0.05, 0.02, 0.2, 6]; 
+lb = [0.4, 0.6, 0.5, 0.5, 0.01, 0.01, 0.001, 0.01, 1];
+ub = [1.6, 1.4, 1, 1, 0.15, 0.15, 0.02, 0.2, 6]; 
 
 options = optimoptions('fmincon', ...
-    'MaxIterations', 8, ...    
-    'Display', 'iter');   
+    'Algorithm', 'interior-point', ...
+    'Display', 'iter', ...
+    'MaxIterations', 100); 
 
 objFunc = @(params) particle_filter(params, data);
 [optimalParams, optimalFval] = fmincon(objFunc, initialParams,...
@@ -65,3 +60,4 @@ objFunc = @(params) particle_filter(params, data);
 
 fprintf('Optimal Parameters: %s\n', mat2str(optimalParams));
 fprintf('Function minimum value: f(x) = %.4f\n', optimalFval);
+

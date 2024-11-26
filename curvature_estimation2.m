@@ -33,35 +33,39 @@ weekly_option_var = var(data.mid_quotes);
 % https://github.com/AleksandarHaber/Python-Implementation-of-Particle-Filter/blob/main/finalVersion.py
 
 % Define the distributions 
-meanProcess = [0; 0];
-covarianceProcess = [0.037, 0; 0, 0.132];
+meanProcess = [0; 0; 0];
+covarianceProcess = diag([0.05, 0.05, 0.1]);
 meanNoise = 0;
 covarianceNoise = 800; 
 
 % Define the state space model 
-phi_alpha = 0.96;
-phi_beta = 1; 
-A = [phi_alpha, 0; 0, phi_beta];
-x0 = [1; 1];
-gamma = 5.35;
-mu = 0.02; %0.0104
-sigma = 0.2; %0.107
+phi_alpha = 0.6;
+phi_beta = 0.6; 
+phi_gamma = 1; 
+A = [phi_alpha, 0, 0; 0, phi_beta, 0; 0, 0, phi_gamma];
+x0 = [1; 1; 2];
+gamma = 2;
+mu = 0.01;
+sigma = 0.1; 
 lowerBound = -0.5;
 upperBound = 0.8; 
 numGrids = 200; 
 gridValues = linspace(lowerBound, upperBound, numGrids); 
 
 
-% Implementation of particle filter
-x0Guess = x0 + [0.01; -0.05]; 
-[xGrid, yGrid] = meshgrid(x0Guess(1)-0.6:0.05:x0Guess(1)+0.6, x0Guess(2)-0.4:0.05:x0Guess(2)+0.4);
+% Implementation of particle filter & EM algorithm 
+rng(1);
+x0Guess = x0 + [0.01; -0.05; 0.1]; 
+[xGrid, yGrid, zGrid] = meshgrid(x0Guess(1)-0.4:0.05:x0Guess(1)+0.4,...
+    x0Guess(2)-0.2:0.05:x0Guess(2)+0.2, x0Guess(3)-1:0.5:x0Guess(3)+3);
 xVec = xGrid(:);
-yVec = yGrid(:); 
-states = [xVec, yVec]';
+yVec = yGrid(:);
+zVec = zGrid(:);
+states = [xVec, yVec, zVec]';
 [dim1, numberParticle] = size(states);
 weights = (1 / numberParticle) * ones(1, numberParticle); 
 
-numberIterations = 702; %702
+numberIterations = 200; %702
 stateList = {}; 
 stateList{end+1} = states; 
 weightList = {}; 
@@ -69,46 +73,10 @@ weightList{end+1} = weights;
 
 count = 0; 
 for i = 1:numberIterations
-    
-    rng(1000*i);
+
     newStates = A * states + mvnrnd(meanProcess, covarianceProcess, numberParticle)';
+
     newWeights = zeros(1, numberParticle); 
-
-    grids = zeros(1, length(gridValues)); 
-    stockPrice = zeros(1, length(gridValues)); 
-    optionPayoff = zeros(1, length(gridValues)); 
-    rfs = zeros(1, length(gridValues)); 
-    c1s = zeros(1, length(gridValues));
-    c2s = zeros(1, length(gridValues)); 
-    
-    for k = 1 : length(gridValues)
-
-        currentValue = gridValues(k);
-        grids(k) = currentValue; 
-        stock_price = data{i, 'spindx'}; 
-        stockPrice(k) = stock_price; 
-        option_payoff = max(stock_price * (1 + currentValue) - data{i, 'strike_price'} / 1000, 0);
-        optionPayoff(k) = option_payoff; 
-        rf = data{i, 'DTB3'};
-        rfs(k) = rf; 
-    
-        c1 = 0;
-        c2 = 0;
-        if k == 1
-            c2 = normpdf(currentValue, mu, sigma) * 0.0065;
-            c1 = 0;
-        else
-            for s = 1 : k-1
-                c1 = c1 + normpdf(gridValues(s), mu, sigma) * 0.0065;
-            end
-            for t = 1 : k
-                c2 = c2 + normpdf(gridValues(t), mu, sigma) * 0.0065;
-            end
-        end
-        c1s(k) = c1; 
-        c2s(k) = c2; 
-    end
-
     for j = 1:numberParticle
 
         % Rebound mechanism 
@@ -121,44 +89,74 @@ for i = 1:numberIterations
         end
 
         if newStates(2, j) < 0.6
-            newStates(2, j) = max(newStates(2, j), 0.5); % prevent the state update to extreme value 
             rebound_distance = 0.6 - newStates(2, j);
             newStates(2, j) = newStates(2, j) + 3 * rebound_distance; 
         elseif newStates(2, j) > 1.4 
-            newStates(2, j) = min(newStates(2, j), 1.6); % prevent the state update to extreme value 
             rebound_distance = newStates(2, j) - 1.4; 
             newStates(2, j) = newStates(2, j) - 3 * rebound_distance; 
         end
 
-        update_alpha = newStates(1, j);
-        update_beta = newStates(2, j);
+        if newStates(3, j) < 1
+            rebound_distance = 1 - newStates(3, j);
+            newStates(3, j) = newStates(3, j) + 3 * rebound_distance; 
+        elseif newStates(3, j) > 5 
+            rebound_distance = newStates(3, j) - 5; 
+            newStates(3, j) = newStates(3, j) - 3 * rebound_distance; 
+        end
 
         numerator = 0;
         denominator = 0; 
         for k = 1:length(gridValues)
-            
-            numerator = numerator + optionPayoff(k)*(1+grids(k))^(-gamma)...
-                *(exp(-(-newStates(2,j)*log(c2s(k)))^newStates(1,j))...
-                - exp(-(-newStates(2,j)*log(c1s(k)))^newStates(1,j))); %problem is here!
-            denominator = denominator + (1+rfs(k))*(1+grids(k))^(-gamma)...
-                *(exp(-(-newStates(2,j)*log(c2s(k)))^newStates(1,j))...
-                - exp(-(-newStates(2,j)*log(c1s(k)))^newStates(1,j)));
+            currentValue = gridValues(k); 
+            stock_price = data{i, 'spindx'}; 
+            option_payoff = max(stock_price*(1+gridValues(k)) - data{i, 'strike_price'}/1000, 0); 
+
+            c1 = 0;
+            c2 = 0; 
+            if k==1
+                c2 = normpdf(gridValues(k), mu, sigma) * 0.0065;
+                c1 = 0; 
+            else
+                for s = 1:k-1
+                    c1 = c1 + normpdf(gridValues(s), mu, sigma) * 0.0065;
+                end
+                for t = 1: k
+                    c2 = c2 + normpdf(gridValues(t), mu, sigma) * 0.0065; 
+                end 
+            end 
+
+            numerator = numerator + option_payoff*(1+gridValues(k))^(-newStates(3,j))...
+                *(exp(-(-newStates(2,j)*log(c2))^newStates(1,j))...
+                - exp(-(-newStates(2,j)*log(c1))^newStates(1,j))); %problem is here!
+            denominator = denominator + (1+data{i, 'DTB3'})*(1+gridValues(k))^(-newStates(3,j))...
+                *(exp(-(-newStates(2,j)*log(c2))^newStates(1,j))...
+                - exp(-(-newStates(2,j)*log(c1))^newStates(1,j)));
         end 
+        
+        % use penalty term to solve the state variable constraint problem 
+        %penalty = 0;
+        %if newStates(1,j) < 0.6 || newStates(1,j) > 1.2
+        %    penalty = penalty + 1;
+        %end
+        %if newStates(2,j) < 0.8 || newStates(2,j) > 1.2
+        %    penalty = penalty + 1;
+        %end
         
         meanDis = numerator / denominator;
         distribution0 = mvnpdf(data{i,"mid_quotes"}, meanDis, covarianceNoise);
-        newWeights(j) = real(distribution0 * weights(j)); 
-        fprintf('i=%d j=%d alpha=%.2f beta=%.2f n=%.4f d=%.4f meanDis=%.4f mid_quotes=%.2f prob=%.4f weight=%.6f\n',...
-            i, j, update_alpha, update_beta, numerator, denominator, meanDis, data{i,"mid_quotes"},...
-            distribution0, newWeights(j)); 
+        newWeights(j) = distribution0 * weights(j); 
+        fprintf('i=%d j=%d n=%.4f d=%.4f meanDis=%.4f mid_quotes=%.2f prob=%.4f weight=%.6f\n',...
+            i, j, numerator, denominator, meanDis, data{i,"mid_quotes"}, distribution0, newWeights(j)); 
+
     end 
 
-    %weightStandardized = max(weightStandardized, 1e-6);
-    weightStandardized = real(newWeights / sum(newWeights));
+    weightStandardized = newWeights / sum(newWeights);
+    weightStandardized = max(weightStandardized, 1e-6);
+    weightStandardized = newWeights / sum(newWeights);
 
     tmp1 = weightStandardized.^2; 
     Neff = 1 / sum(tmp1); 
-    if Neff < (numberParticle / 3)
+    if Neff < (numberParticle / 2)
         resampleStateIndex = randsample(1:numberParticle, numberParticle, true, weightStandardized);
         newStates = newStates(:, resampleStateIndex);
         weightStandardized = (1 / numberParticle) * ones(1, numberParticle); 
@@ -173,7 +171,7 @@ for i = 1:numberIterations
 end 
 
 %% Show the estimate results 
-estimatedStates = zeros(2, numberIterations);
+estimatedStates = zeros(3, numberIterations);
 
 for t = 1:numberIterations
     states_t = stateList{t};
@@ -181,58 +179,31 @@ for t = 1:numberIterations
     
     alpha_t = states_t(1, :) * weights_t';
     beta_t = states_t(2, :) * weights_t';
+    gamma_t = states_t(3, :) * weights_t'; 
     
     estimatedStates(1, t) = alpha_t;
     estimatedStates(2, t) = beta_t;
+    estimatedStates(3, t) = gamma_t;
 end
 
 figure;
-subplot(2, 1, 1);
+subplot(3, 1, 1);
 plot(1:numberIterations, estimatedStates(1, :), 'b-', 'LineWidth', 1.5);
 title('Estimated Alpha Dynamics');
 xlabel('Iteration');
 ylabel('Alpha');
 grid on;
 
-subplot(2, 1, 2);
+subplot(3, 1, 2);
 plot(1:numberIterations, estimatedStates(2, :), 'r-', 'LineWidth', 1.5);
 title('Estimated Beta Dynamics');
 xlabel('Iteration');
 ylabel('Beta');
 grid on;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+subplot(3, 1, 3);
+plot(1:numberIterations, estimatedStates(3, :), 'r-', 'LineWidth', 1.5);
+title('Estimated Gamma Dynamics');
+xlabel('Iteration');
+ylabel('Gamma');
+grid on;

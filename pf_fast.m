@@ -1,4 +1,4 @@
-function loglikelihood = particle_filter(params, data)
+function state_variable = pf_fast(params, data)
     % params1, params2: alpha, beta 
     % params3, params4: phi_alpha, phi_beta 
     % params5, params6: variance_alpha, variance_beta 
@@ -21,11 +21,11 @@ function loglikelihood = particle_filter(params, data)
     states = [xVec, yVec]';
     [dim1, numberParticle] = size(states); 
     weights = (1 / numberParticle) * ones(1, numberParticle); 
-    iterations = 702; 
+    iterations = 100; 
     stateList = {};
     stateList{end+1} = states;
     weightList = {};
-    weightList{end+1} = weights; 
+    weightList{end+1} = weights; % equal weight in the beginning 
     loglikelihood = 0; 
 
     % define state space model 
@@ -40,41 +40,6 @@ function loglikelihood = particle_filter(params, data)
 
         newStates = A * states + mvnrnd(processMean, processCov, numberParticle)';
         newWeights = zeros(1, numberParticle); 
-
-        grids = zeros(1, length(gridValues)); 
-        stockPrice = zeros(1, length(gridValues)); 
-        optionPayoff = zeros(1, length(gridValues)); 
-        rfs = zeros(1, length(gridValues)); 
-        c1s = zeros(1, length(gridValues));
-        c2s = zeros(1, length(gridValues)); 
-        
-        for k = 1 : length(gridValues)
-
-            currentValue = gridValues(k);
-            grids(k) = currentValue; 
-            stock_price = data{i, 'spindx'}; 
-            stockPrice(k) = stock_price; 
-            option_payoff = max(stock_price * (1 + currentValue) - data{i, 'strike_price'} / 1000, 0);
-            optionPayoff(k) = option_payoff; 
-            rf = data{i, 'DTB3'};
-            rfs(k) = rf; 
-        
-            c1 = 0;
-            c2 = 0;
-            if k == 1
-                c2 = normpdf(currentValue, mu, sigma) * 0.0065;
-                c1 = 0;
-            else
-                for s = 1 : k-1
-                    c1 = c1 + normpdf(gridValues(s), mu, sigma) * 0.0065;
-                end
-                for t = 1 : k
-                    c2 = c2 + normpdf(gridValues(t), mu, sigma) * 0.0065;
-                end
-            end
-            c1s(k) = c1; 
-            c2s(k) = c2; 
-        end
         
         for j = 1:numberParticle
 
@@ -97,18 +62,36 @@ function loglikelihood = particle_filter(params, data)
                 newStates(2, j) = newStates(2, j) - 3 * rebound_distance; 
             end 
         
-            numerator = 0;
-            denominator = 0; 
-            for k = 1:length(gridValues)
-                numerator = numerator + optionPayoff(k)*(1+grids(k))^(-gamma)...
-                    *(exp(-(-newStates(2,j)*log(c2s(k)))^newStates(1,j))...
-                    - exp(-(-newStates(2,j)*log(c1s(k)))^newStates(1,j))); %problem is here!
-                denominator = denominator + (1+rfs(k))*(1+grids(k))^(-gamma)...
-                    *(exp(-(-newStates(2,j)*log(c2s(k)))^newStates(1,j))...
-                    - exp(-(-newStates(2,j)*log(c1s(k)))^newStates(1,j)));
-            end 
-        
-            meanDis = numerator / denominator; 
+            temp_numerator = 0;
+            temp_denominator = 0; 
+            for k = 1 : length(gridValues)
+                currentValue = gridValues(k); 
+                stock_price = data{i, 'spindx'}; 
+                option_payoff = max(stock_price*(1+currentValue)-data{i, 'strike_price'}/1000, 0);
+
+                c1 = 0;
+                c2 = 0;
+                if k==1
+                    c2 = normpdf(currentValue, mu, sigma) * 0.0065;
+                    c1 = 0;
+                else
+                    for s = 1 : k-1
+                        c1 = c1 + normpdf(gridValues(s), mu, sigma) * 0.0065;
+                    end
+                    for t = 1 : k
+                        c2 = c2 + normpdf(gridValues(t), mu, sigma) * 0.0065;
+                    end
+                end
+
+                temp_numerator = temp_numerator + option_payoff*(1+currentValue)^(-gamma)...
+                    *(exp(-(-newStates(2,j)*log(c2))^newStates(1,j))...
+                    - exp(-(-newStates(2,j)*log(c1))^newStates(1,j)));
+                temp_denominator = temp_denominator + (1+data{i, 'DTB3'})*(1+currentValue)^(-gamma)...
+                *(exp(-(-newStates(2,j)*log(c2))^newStates(1,j))...
+                - exp(-(-newStates(2,j)*log(c1))^newStates(1,j)));
+            end
+
+            meanDis = temp_numerator / temp_denominator; 
             distribution0 = mvnpdf(data{i, 'mid_quotes'}, meanDis, observationCov);
             newWeights(j) = real(distribution0 * weights(j)); 
             %fprintf('i=%d j=%d meanDis=%.4f observe=%.2f prob=%.4f weight=%.6f\n', i, j, meanDis, data{i, 'mid_quotes'},...
@@ -137,14 +120,31 @@ function loglikelihood = particle_filter(params, data)
         estimated_beta = current_states(2, :) * current_weights'; 
         numerator = 0;
         denominator = 0; 
-        for k = 1 : length(gridValues)
+        parfor k = 1 : length(gridValues)
+            currentValue = gridValues(k); 
+            stock_price = data{i, 'spindx'}; 
+            option_payoff = max(stock_price*(1+currentValue)-data{i, 'strike_price'}/1000, 0);
 
-            numerator = numerator + optionPayoff(k)*(1+grids(k))^(-gamma)...
-                *(exp(-(-estimated_beta*log(c2s(k)))^estimated_alpha)...
-                - exp(-(-estimated_beta*log(c1s(k)))^estimated_alpha));
-            denominator = denominator + (1+rfs(k))*(1+grids(k))^(-gamma)...
-            *(exp(-(-estimated_beta*log(c2s(k)))^estimated_alpha)...
-            - exp(-(-estimated_beta*log(c1s(k)))^estimated_alpha));
+            c1 = 0;
+            c2 = 0;
+            if k==1
+                c2 = normpdf(currentValue, mu, sigma) * 0.0065;
+                c1 = 0;
+            else
+                for s = 1 : k-1
+                    c1 = c1 + normpdf(currentValue, mu, sigma) * 0.0065;
+                end
+                for t = 1 : k
+                    c2 = c2 + normpdf(currentValue, mu, sigma) * 0.0065;
+                end
+            end
+
+            numerator = numerator + option_payoff*(1+currentValue)^(-gamma)...
+                *(exp(-(-estimated_beta*log(c2))^estimated_alpha)...
+                - exp(-(-estimated_beta*log(c1))^estimated_alpha));
+            denominator = denominator + (1+data{i, 'DTB3'})*(1+currentValue)^(-gamma)...
+            *(exp(-(-estimated_beta*log(c2))^estimated_alpha)...
+            - exp(-(-estimated_beta*log(c1))^estimated_alpha));
         end
 
         model_implied_price = numerator / denominator;
